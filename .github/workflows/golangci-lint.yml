@@ -1,9 +1,5 @@
 name: golangci-lint
 on:
-  push:
-    branches:
-      - master
-      - main
   pull_request:
     types: [opened, edited, synchronize, reopened]
 
@@ -17,38 +13,60 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
   cancel-in-progress: true
 
-
 jobs:
+  detect-go-projects:
+    name: project-changes
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+
+    steps:
+      # Checkout full history so git diff works correctly
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build matrix of changed Go projects
+        id: set-matrix
+        run: |
+          # Ensure base branch is available locally for diff
+          git fetch origin ${{ github.base_ref }}
+
+          # 1. Get list of files changed in the PR
+          files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+
+          # 2. Extract top-level directories
+          dirs=$(echo "$files" | cut -d/ -f1 | sort -u)
+
+          # 3. Keep only directories that contain go.mod
+          projects=()
+          for dir in $dirs; do
+            if [ -f "$dir/go.mod" ]; then
+              projects+=("\"$dir\"")
+            fi
+          done
+
+          # 4. Convert bash array to JSON
+          matrix=$(printf '%s\n' "${projects[@]}" | jq -s .)
+
+          # 5. Export matrix for next job
+          echo "matrix={\"working-directory\":$matrix}" >> "$GITHUB_OUTPUT"
+
   golangci:
     name: lint
+    needs: detect-go-projects
+    # Skip job if no Go projects were modified
+    if: ${{ needs.detect-go-projects.outputs.matrix != '{"working-directory":[]}' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        working-directory:
-          - echo-mysql
-          - echo-sql
-          - fasthttp-postgres
-          - gin-mongo
-          - gin-redis
-          - go-grpc
-          - go-jwt
-          - go-twilio
-          - graphql-sql
-          - http-pokeapi
-          - mux-elasticsearch
-          - mux-mysql
-          - mux-sql
-          - S3-Keploy
-          - sse-svelte
-          - users-profile
-          - book-store-inventory
-          
+      matrix: ${{ fromJson(needs.detect-go-projects.outputs.matrix) }}
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.23.4'
+          go-version: "1.23.4"
           cache: false
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v3
