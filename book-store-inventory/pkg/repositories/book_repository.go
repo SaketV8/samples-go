@@ -20,6 +20,8 @@ func (bookModel *BookModel) GetBooks() ([]models.Book, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// this line will produce lint error lets check it :)
 	defer rows.Close() // ✅ Prevent resource leak
 
 	books := []models.Book{}
